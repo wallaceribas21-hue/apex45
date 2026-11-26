@@ -77,7 +77,7 @@
     app.appendChild(topo());
     var tela = h("div", {}); app.appendChild(tela);
     f(tela);
-    if (r === "total") { var cc = cartaoCodigo(); if (cc) tela.appendChild(cc); }
+    if (r === "total") { var cc = cartaoCodigo(); if (cc) tela.appendChild(cc); if (COM_BANCO) tela.appendChild(h("button", { class: "btn sec", on: { click: sairComAviso } }, "Sair")); }
     app.appendChild(navegacao(r));
   }
 
@@ -99,7 +99,7 @@
 
   // ---------- 1. Entrar ----------
   // v3 (25/11): com banco, cada um entra com 1 toque (sem e-mail) e guarda um codigo pessoal pra outro celular
-  function caixaCodigo() {
+  function caixaCodigo(rotulo) {
     var msg = h("p", { class: "erro" });
     var cod = h("input", { id: "codigo", placeholder: "Ex.: K7P2QX", maxlength: 8, autocomplete: "off", autocapitalize: "characters", spellcheck: "false", style: "text-transform:uppercase;letter-spacing:3px" });
     var btn = h("button", { class: "btn sec", type: "submit" }, "Entrar com meu código");
@@ -110,29 +110,44 @@
       btn.disabled = true; msg.textContent = "";
       Store.entrarComCodigo(v).then(iniciar).then(function () { ir("hoje"); desenhar(); })
         .catch(function (er) { msg.textContent = er.message; }).then(function () { btn.disabled = false; });
-    } } }, h("label", { for: "codigo" }, "Já participa e trocou de celular?"), cod, btn, msg);
+    } } }, h("label", { for: "codigo" }, rotulo || "Já participa e trocou de celular?"), cod, btn, msg);
   }
-  function telaEntrarDireto() {
-    var temConvite = /[?&]convite=/.test(location.search);
+  function modoAdmin() { return !COM_BANCO || /[?&]admin=1/.test(location.search); }
+  function temConviteNaUrl() { return /[?&]convite=/.test(location.search); }
+  function abertoPeloIcone() { try { return navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches; } catch (e) { return false; } }
+  function botaoEntrarNoDesafio() {
     var msg = h("p", { class: "erro" });
     var btn = h("button", { class: "btn", type: "button", on: { click: function () {
       btn.disabled = true; btn.textContent = "Entrando..."; msg.textContent = "";
       Store.entrarDireto().then(iniciar).then(function () { ir(D && D.me && D.me.nome ? "hoje" : "metas"); desenhar(); })
         .catch(function (er) { msg.textContent = er.message; btn.disabled = false; btn.textContent = "Entrar no desafio"; });
     } } }, "Entrar no desafio");
+    return h("div", {}, btn, msg);
+  }
+  function telaEntrarDireto() {
+    var temConvite = temConviteNaUrl();
+    var icone = abertoPeloIcone();
+    var codigoPrimeiro = icone || (!temConvite && !modoAdmin());
+    var rotulo = icone ? "Abriu pelo ícone da tela de início? Ele começa vazio: digite seu código" : (temConvite ? "Já participa (outro celular ou outro navegador)? Use seu código" : "Seu código de acesso");
+    var texto = icone ? "Se você já entrou antes no navegador, use seu código. Primeira vez? Toque em Entrar."
+      : temConvite ? "Primeira vez? Toque em Entrar, escreva seu nome e suas metas. Não precisa de e-mail nem senha."
+      : modoAdmin() ? "Modo Admin: entre para criar o desafio."
+      : "Abra pelo link que o grupo mandou. Se você já participa, digite seu código.";
+    var podeEntrar = temConvite || modoAdmin();
     app.appendChild(h("div", { class: "hero" },
       h("div", { class: "assina", style: "margin-bottom:22px" }, "APEX45"),
       h("h1", {}, h("b", {}, "45 dias."), " ", h("span", {}, "Hábito que continua depois.")),
-      h("p", { class: "apoio", style: "margin-top:14px" }, temConvite
-        ? "Toque em Entrar, escreva seu nome e suas metas. Não precisa de e-mail nem senha."
-        : "Abra pelo link que o grupo mandou. Se você já participa, use seu código abaixo."),
-      btn, msg, caixaCodigo()));
+      h("p", { class: "apoio", style: "margin-top:14px" }, texto),
+      codigoPrimeiro ? caixaCodigo(rotulo) : null,
+      podeEntrar ? botaoEntrarNoDesafio() : null,
+      codigoPrimeiro ? null : caixaCodigo(rotulo)));
   }
   function cartaoCodigo() {
-    if (!D || !D.me || !D.me.codigo_acesso) return null;
+    if (!D || !D.me) return null;
+    if (!D.me.codigo_acesso) return COM_BANCO && Store.entrarComCodigo ? h("div", { class: "faixa" }, h("b", {}, "Código ainda não saiu. "), "Avise o Admin: sem ele você não volta em outro celular.") : null;
     return h("div", { class: "card" }, h("h3", {}, "Seu código de acesso"),
       h("div", { class: "mono", style: "font-size:30px;font-weight:700;letter-spacing:4px;margin:6px 0" }, D.me.codigo_acesso),
-      h("p", { class: "apoio" }, "Tire um print. Em outro celular, abra o link, toque em \"Já participa e trocou de celular?\" e digite estas letras: volta tudo, com seus pontos."));
+      h("p", { class: "apoio" }, "Tire um print. Em outro celular (ou se abrir pelo ícone da tela de início), abra o link do grupo e digite estas letras em \"Use seu código\": volta tudo, com seus pontos."));
   }
   function sairComAviso() {
     var s = Store.sessao(), c = D && D.me && D.me.codigo_acesso;
@@ -165,6 +180,18 @@
   }
 
   function telaSemDesafio() {
+    if (COM_BANCO && Store.entrarComCodigo && !modoAdmin()) {
+      var conv = D && D.temConvite && !D.erroConvite;
+      app.appendChild(h("div", { class: "hero" },
+        h("div", { class: "assina", style: "margin-bottom:22px" }, "APEX45"),
+        h("h1", {}, conv ? "Falta 1 toque." : "Você ainda não está no desafio."),
+        D && D.erroConvite ? h("p", { class: "erro", style: "margin-top:12px" }, "O convite não abriu: " + D.erroConvite + ". Peça o link de novo no grupo.") : null,
+        h("p", { class: "apoio", style: "margin-top:12px" }, conv ? "Primeira vez? Toque em Entrar no desafio. Já participa? Use seu código." : "Abra pelo link que o grupo mandou, ou use seu código."),
+        conv ? botaoEntrarNoDesafio() : null,
+        caixaCodigo(conv ? "Já participa? Use seu código" : "Seu código de acesso"),
+        h("button", { class: "btn sec", on: { click: sairComAviso } }, "Sair")));
+      return;
+    }
     var nome = h("input", { value: "APEX45" });
     var ini = h("input", { type: "date", value: "2026-11-25" }), fim = h("input", { type: "date", value: "2027-01-08" });
     var erro = h("p", { class: "erro" });
@@ -175,7 +202,7 @@
       h("label", {}, "Nome"), nome, h("div", { class: "dois" }, h("div", {}, h("label", {}, "Início"), ini), h("div", {}, h("label", {}, "Fim"), fim)),
       h("button", { class: "btn", on: { click: function (ev) {
         var b = ev.currentTarget; if (b.disabled) return; b.disabled = true; b.textContent = "Criando...";
-        Store.criarDesafio(nome.value, ini.value, fim.value).then(function () { return iniciar(); }).then(function () { ir("metas"); })
+        Store.criarDesafio(nome.value, ini.value, fim.value).then(function () { return iniciar(); }).then(function () { ir("metas"); desenhar(); })
           .catch(function (e) { erro.textContent = e.message; b.disabled = false; b.textContent = "Criar desafio"; });
       } } }, "Criar desafio"), erro,
       COM_BANCO && Store.entrarComCodigo ? caixaCodigo() : null,
@@ -238,6 +265,7 @@
     if (primeiro) { var cc = cartaoCodigo(); if (cc) app.appendChild(cc); }
     app.appendChild(form);
     if (!primeiro) { app.appendChild(h("button", { class: "btn sec", on: { click: function () { ir("hoje"); } } }, "Voltar")); app.appendChild(navegacao("metas")); }
+    else if (COM_BANCO && Store.entrarComCodigo && !D.admin) app.appendChild(caixaCodigo("Não é sua primeira vez? Use seu código (volta seus pontos)"));
   }
 
   // ---------- 3. Hoje ----------
@@ -737,7 +765,7 @@
     }).catch(function (e) {
       limpar(app); app.appendChild(h("div", { class: "hero" }, h("h1", {}, "Algo não abriu"), h("p", { class: "erro" }, e.message),
         h("button", { class: "btn", on: { click: function () { location.reload(); } } }, "Tentar de novo"),
-        Store && Store.sair ? h("button", { class: "btn sec", on: { click: function () { Store.sair().then(function () { location.href = location.pathname; }, function () { location.href = location.pathname; }); } } }, "Sair") : null));
+        Store && Store.sair ? h("button", { class: "btn sec", on: { click: function () { Store.sair().then(function () { location.href = location.pathname + location.search; }, function () { location.href = location.pathname + location.search; }); } } }, "Sair") : null));
     });
   }
   boot();

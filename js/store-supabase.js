@@ -21,42 +21,58 @@
         s.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js";
         s.onload = function () {
           sb = root.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
-          sb.auth.getSession().then(function (r) { ctx = { session: r.data.session }; resolve(); });
+          // revisao 25/11: sem internet com o token vencido o getSession devolve erro de rede: NAO e "deslogado"
+          // (senao a pessoa toca Entrar e vira outra). Mostra "Algo nao abriu / Tentar de novo".
+          sb.auth.getSession().then(function (r) {
+            var sess = r && r.data ? r.data.session : null;
+            if (!sess && r && r.error && (r.error.name === "AuthRetryableFetchError" || /fetch|network|rede|Failed/i.test(r.error.message || ""))) {
+              return reject(new Error("Sem conexão agora. Confira a internet e toque em Tentar de novo."));
+            }
+            ctx = { session: sess }; resolve();
+          }, function () { reject(new Error("Sem conexão agora. Confira a internet e toque em Tentar de novo.")); });
         };
         s.onerror = function () { reject(new Error("Não consegui carregar o Supabase. Confira a internet.")); };
         document.head.appendChild(s);
       });
     },
-    sessao: function () { return ctx && ctx.session ? { email: ctx.session.user.email || null, anonimo: !ctx.session.user.email } : null; },
+    sessao: function () { if (!ctx || !ctx.session) return null; var u = ctx.session.user; return { email: u.email || null, anonimo: u.is_anonymous === true || !u.email }; },
     entrar: function (email) {
       return sb.auth.signInWithOtp({ email: email, options: { emailRedirectTo: location.href.split("#")[0] } }).then(ok);
     },
     // v3 (25/11): acesso de cada um SEM e-mail. Toca, entra; a sessao fica guardada no celular.
+    // revisao 25/11: so entra no desafio pelo convite quando a pessoa TOCA em Entrar (querEntrar), nunca sozinho
     entrarDireto: function () {
+      ctx.querEntrar = true; ctx.convitePerdido = null;
+      return Store.sessaoAnonima();
+    },
+    sessaoAnonima: function () {
       if (ctx.session) return Promise.resolve();
       return sb.auth.signInAnonymously().then(function (r) {
         if (r.error) throw new Error(/anonymous/i.test(r.error.message) ? "A entrada sem e-mail ainda não foi ligada. Avise o Admin." : r.error.message);
-        ctx.session = r.data.session; ctx.convitePerdido = null;
+        ctx.session = r.data.session;
       });
     },
     // outro celular: o codigo pessoal devolve a mesma pessoa (pontos e metas)
     entrarComCodigo: function (codigo) {
-      return Store.entrarDireto().then(function () { return sb.rpc("recuperar_acesso", { p_codigo: codigo }); }).then(ok).then(function (pid) {
+      ctx.querEntrar = false;
+      return Store.sessaoAnonima().then(function () { return sb.rpc("recuperar_acesso", { p_codigo: codigo }); }).then(ok).then(function (pid) {
         if (!pid) throw new Error("Código não encontrado. Confira as 6 letras.");
       });
     },
     acessosDoGrupo: function () {
       return sb.rpc("acessos_do_grupo", { did: ctx.ids.d }).then(ok).then(function (r) { return (r || []).map(function (x) { return { id: x.participante_id, nome: x.nome, codigo: x.codigo_acesso }; }); });
     },
-    sair: function () { return sb.auth.signOut().then(function () { ctx.session = null; }); },
+    sair: function () { return sb.auth.signOut().then(function () { ctx.session = null; ctx.querEntrar = false; ctx.convitePerdido = null; }); },
     hoje: hoje,
     setHoje: function () {},
 
     carregar: function () {
       var uid = ctx.session.user.id, h = hoje(), cod = convite();
       return sb.from("participantes").select("*, desafios(*)").eq("user_id", uid).order("created_at", { ascending: true }).limit(1).then(ok).then(function (rows) {
-        if (!rows.length && cod && !ctx.convitePerdido) return sb.rpc("entrar_no_desafio", { codigo: cod }).then(ok)
-          .then(function () { return Store.carregar(); }, function (e) {
+        // entra sozinho so se tocou em Entrar (anonimo) ou se veio do login por e-mail (v1)
+        var podeEntrar = ctx.querEntrar || !Store.sessao().anonimo;
+        if (!rows.length && cod && podeEntrar && !ctx.convitePerdido) return sb.rpc("entrar_no_desafio", { codigo: cod }).then(ok)
+          .then(function () { ctx.querEntrar = false; return Store.carregar(); }, function (e) {
             // convite errado ou desafio fechado: cai na tela "sem desafio" (que tem Sair), sem travar o app
             ctx.convitePerdido = e.message || "Convite inválido";
             return Store.carregar();
@@ -84,9 +100,10 @@
             aproveitamento: Math.round(res.aproveitamento * 10000) / 10000, semana: wk, pontos_semana: R.pontosSemana(res, wk),
             ultimo_lancamento: ultimo || null };
           // v2: o app calcula (rules.js) e grava o proprio resumo; o grupo le o resumo dos outros
-          var gravar = sb.from("resumo").upsert(meu, { onConflict: "participante_id" }).then(function (x) { if (x.error) console.warn("resumo:", x.error.message); });
+          // revisao 25/11: sem nome ainda nao entra no ranking (evita "Participante" fantasma na cobranca)
+          var gravar = !me.nome ? Promise.resolve() : sb.from("resumo").upsert(meu, { onConflict: "participante_id" }).then(function (x) { if (x.error) console.warn("resumo:", x.error.message); });
           var linhas = r[2].filter(function (p) { return p.participante_id !== me.id; });
-          linhas.push(Object.assign({ nome: me.nome || "Você" }, meu));
+          if (me.nome) linhas.push(Object.assign({ nome: me.nome || "Você" }, meu));
           var placar = linhas.map(function (p) {
             var eu = p.participante_id === me.id;
             // quem nao abre o app ha 3+ dias nao lancou nada nesse tempo: 2 dias seguidos sem lancar zeram a sequencia
