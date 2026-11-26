@@ -86,7 +86,7 @@
     var info = [];
     if (gravando()) return h("div", { class: "topo" }, h("div", { class: "assina" }, "APEX45"));
     if (D.modo === "demo") info.push(h("span", { class: "selo laranja" }, "Demo"));
-    if (!d.data_confirmada) info.push(h("span", { class: "selo", title: "A data de início ainda precisa ser confirmada" }, "Datas a confirmar"));
+    if (d && !d.data_confirmada) info.push(h("span", { class: "selo", title: "A data de início ainda precisa ser confirmada" }, "Datas a confirmar"));
     return h("div", { class: "topo" }, h("div", { class: "assina" }, "APEX45"), h("div", { style: "display:flex;gap:6px" }, info));
   }
   function navegacao(r) {
